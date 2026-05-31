@@ -1,0 +1,23 @@
+{
+  "name": "tejas-backend",
+  "version": "0.1.0",
+  "description": "Tejas — personal health agent fleet (backend)",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node --watch server.js",
+    "start": "node server.js",
+    "init-db": "node db/database.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "multer": "^2.1.1",
+    "node-cron": "^4.2.1"
+  }
+}

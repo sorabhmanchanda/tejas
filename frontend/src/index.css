@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-base text-zinc-200 font-body antialiased;
+    background-image:
+      radial-gradient(900px 500px at 100% -10%, rgba(245, 158, 11, 0.06), transparent 60%),
+      radial-gradient(700px 500px at -10% 110%, rgba(168, 85, 247, 0.05), transparent 55%);
+    background-attachment: fixed;
+  }
+  /* Numeric/tabular feel for stats. */
+  .num {
+    @apply font-mono tabular-nums;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-line bg-card/90 backdrop-blur-sm;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-line bg-base/60 px-2.5 py-1 text-xs;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-line bg-card px-4 py-2.5 text-sm font-medium text-zinc-200 transition hover:border-zinc-600 hover:bg-zinc-800/60 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply border-saffron/40 bg-saffron/15 text-saffron hover:bg-saffron/25;
+  }
+  .input {
+    @apply w-full rounded-xl border border-line bg-base/60 px-3.5 py-2.5 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-saffron/50 focus:ring-2 focus:ring-saffron/15;
+  }
+  .label {
+    @apply mb-1.5 block text-xs font-medium uppercase tracking-wide text-zinc-400;
+  }
+}
+
+/* Slim scrollbars to match the dark tool aesthetic. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-zinc-700/60;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
