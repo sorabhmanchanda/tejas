@@ -79,6 +79,7 @@ export const api = {
   getChat: (agentId) => request(`/agents/${agentId}/chat`),
   sendChat: (agentId, message) =>
     request(`/agents/${agentId}/chat`, { method: 'POST', body: { message } }),
+  clearChat: (agentId) => request(`/agents/${agentId}/chat`, { method: 'DELETE' }),
 
   // Fleet group chat
   getFleetMessages: (since = 0) =>

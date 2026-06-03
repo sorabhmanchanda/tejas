@@ -5,7 +5,7 @@ const SANSKRIT = { anna: 'अन्न', agni: 'अग्नि', bala: 'बल'
 
 const STARTERS = {
   anna: ['Suggest a 40g protein eggetarian breakfast', 'What can I make with paneer and spinach?'],
-  agni: ["How's my deficit tracking this week?", 'Am I eating enough protein?'],
+  agni: ['What did I eat today?', 'Net calories after my workout?', 'How much protein left?'],
   bala: ["What's my workout today?", 'Should I deload soon?'],
   nidra: ['How was my recovery last night?', 'Tips to sleep better before gym days'],
   sage: ['Give me a quick status check', 'What should I focus on this week?'],
@@ -74,12 +74,25 @@ export default function ChatDrawer({ agent, open, onClose }) {
               <div className="text-[11px] text-zinc-400">{agent.role}</div>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="grid h-8 w-8 place-items-center rounded-lg border border-line text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-          >
-            ✕
-          </button>
+          <div className="flex items-center gap-2">
+            {messages.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  api.clearChat(agent.id).then(() => setMessages([])).catch(() => {});
+                }}
+                className="rounded-lg border border-line px-2 py-1 text-[11px] text-zinc-500 hover:text-zinc-200"
+              >
+                Clear
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="grid h-8 w-8 place-items-center rounded-lg border border-line text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         {/* Messages */}
