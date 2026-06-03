@@ -65,11 +65,14 @@ export default function PhotoUpload({ mode = 'photo', onLogged }) {
 
   async function handleParseText(value) {
     const t = (value ?? text).trim();
-    if (!t) return;
+    if (!t) {
+      setError('Say or type what you ate first.');
+      return;
+    }
     setError('');
     setStatus('analyzing');
     try {
-      const { parsed } = await api.parseMeal(t, mealType);
+      const { parsed, degraded, note, mock } = await api.parseMeal(t, mealType);
       setAnalysis({
         food_name: parsed.food_name || t,
         items: [],
@@ -79,6 +82,8 @@ export default function PhotoUpload({ mode = 'photo', onLogged }) {
         fat_g: parsed.fat_g ?? 0,
         fiber_g: parsed.fiber_g ?? 0,
         confidence: parsed.confidence ?? 0.5,
+        notes: degraded ? note : undefined,
+        mock: Boolean(mock || degraded),
       });
       setStatus('ready');
     } catch (e) {
@@ -192,7 +197,7 @@ export default function PhotoUpload({ mode = 'photo', onLogged }) {
       {status === 'analyzing' && (
         <div className="flex items-center justify-center gap-3 rounded-xl border border-line bg-base/50 py-6 text-sm text-zinc-400">
           <span className="h-4 w-4 animate-spin rounded-full border-2 border-anna/30 border-t-anna" />
-          Anna is reading your plate…
+          {mode === 'photo' ? 'Anna is reading your plate…' : 'Parsing what you ate…'}
         </div>
       )}
 

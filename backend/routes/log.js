@@ -5,7 +5,8 @@
 
 import { Router } from 'express';
 import db from '../db/database.js';
-import { callAI, parseJsonResponse, hasApiKey } from '../lib/ai.js';
+import { hasApiKey } from '../lib/ai.js';
+import { parseMealDescription } from '../lib/mealParse.js';
 import { requireLoginId } from '../lib/user.js';
 import { triggerFleetDiscussion } from '../lib/fleetChat.js';
 
@@ -125,49 +126,17 @@ router.post('/meal', (req, res) => {
   res.json({ meal });
 });
 
-const PARSE_SYSTEM = `You parse meal descriptions into nutrition data. User is Indian, eggetarian.
-Default portions to typical home-cooked Indian servings unless specified.
-Return JSON only:
-{
-  "food_name": "concise summary",
-  "calories": number,
-  "protein_g": number,
-  "carbs_g": number,
-  "fat_g": number,
-  "fiber_g": number,
-  "confidence": 0.0-1.0
-}`;
-
 router.post('/meal/parse', async (req, res) => {
   const { text, meal_type = 'snack' } = req.body ?? {};
   if (typeof text !== 'string' || text.trim().length === 0) {
     return res.status(400).json({ error: 'text is required' });
   }
-  if (!hasApiKey()) {
-    return res.json({
-      parsed: {
-        food_name: text.trim().slice(0, 120),
-        calories: 350,
-        protein_g: 14,
-        carbs_g: 45,
-        fat_g: 10,
-        fiber_g: 6,
-        confidence: 0.4,
-      },
-      mock: true,
-    });
-  }
   try {
-    const out = await callAI({
-      maxTokens: 600,
-      json: true,
-      system: PARSE_SYSTEM,
-      messages: [{ role: 'user', content: `Meal type: ${meal_type}\nDescription: ${text}` }],
-    });
-    res.json({ parsed: parseJsonResponse(out) });
+    const result = await parseMealDescription(text, meal_type);
+    res.json(result);
   } catch (e) {
     console.error('[meal/parse]', e.message);
-    res.status(502).json({ error: 'Could not parse meal right now' });
+    res.status(400).json({ error: e.message || 'Could not parse meal' });
   }
 });
 
