@@ -6,8 +6,11 @@
 import { Router } from 'express';
 import db from '../db/database.js';
 import { callAI, parseJsonResponse, hasApiKey } from '../lib/ai.js';
+import { requireLoginId } from '../lib/user.js';
+import { triggerFleetDiscussion } from '../lib/fleetChat.js';
 
 const router = Router();
+router.use(requireLoginId);
 
 const MEAL_TYPES = new Set(['breakfast', 'lunch', 'dinner', 'snack']);
 const WORKOUT_TYPES = new Set(['gym', 'run', 'cardio', 'mobility', 'rest']);
@@ -18,33 +21,40 @@ function clampNum(value, { min = -Infinity, max = Infinity, fallback = 0 } = {})
   return Math.min(max, Math.max(min, n));
 }
 
-function recordEpisode(agentId, content, sourceTable, sourceId) {
+function recordEpisode(loginId, agentId, content, sourceTable, sourceId) {
   db.prepare(
-    'INSERT INTO episodes (agent_id, content, source_table, source_id) VALUES (?, ?, ?, ?)'
-  ).run(agentId, content, sourceTable, sourceId);
+    'INSERT INTO episodes (login_id, agent_id, content, source_table, source_id) VALUES (?, ?, ?, ?, ?)'
+  ).run(loginId, agentId, content, sourceTable, sourceId);
 }
 
 // ---- Today summary (drives the live totals + rings) -------------------------
-router.get('/today', (_req, res) => {
+router.get('/today', (req, res) => {
+  const { loginId } = req;
   const meals = db
-    .prepare("SELECT * FROM meals WHERE date(logged_at) = date('now','localtime') ORDER BY logged_at")
-    .all();
+    .prepare(
+      `SELECT * FROM meals WHERE login_id = ? AND date(logged_at) = date('now','localtime') ORDER BY logged_at`
+    )
+    .all(loginId);
   const water = db
     .prepare(
-      "SELECT COALESCE(SUM(amount_ml),0) AS ml FROM water_log WHERE date(logged_at) = date('now','localtime')"
+      `SELECT COALESCE(SUM(amount_ml),0) AS ml FROM water_log
+       WHERE login_id = ? AND date(logged_at) = date('now','localtime')`
     )
-    .get();
+    .get(loginId);
   const workout = db
     .prepare(
-      "SELECT * FROM workouts WHERE date(completed_at) = date('now','localtime') ORDER BY completed_at DESC LIMIT 1"
+      `SELECT * FROM workouts WHERE login_id = ? AND date(completed_at) = date('now','localtime')
+       ORDER BY completed_at DESC LIMIT 1`
     )
-    .get();
+    .get(loginId);
   const lastWeight = db
-    .prepare('SELECT weight_kg, logged_at FROM weight_log ORDER BY logged_at DESC LIMIT 1')
-    .get();
+    .prepare(
+      'SELECT weight_kg, logged_at FROM weight_log WHERE login_id = ? ORDER BY logged_at DESC LIMIT 1'
+    )
+    .get(loginId);
   const sleep = db
-    .prepare('SELECT * FROM sleep_log ORDER BY created_at DESC LIMIT 1')
-    .get();
+    .prepare('SELECT * FROM sleep_log WHERE login_id = ? ORDER BY created_at DESC LIMIT 1')
+    .get(loginId);
 
   const totals = meals.reduce(
     (acc, m) => ({
@@ -91,10 +101,11 @@ router.post('/meal', (req, res) => {
 
   const info = db
     .prepare(
-      `INSERT INTO meals (meal_type, food_name, portion_notes, calories, protein_g, carbs_g, fat_g, fiber_g, source, photo_path, confidence)
-       VALUES (@meal_type, @food_name, @portion_notes, @calories, @protein_g, @carbs_g, @fat_g, @fiber_g, @source, @photo_path, @confidence)`
+      `INSERT INTO meals (login_id, meal_type, food_name, portion_notes, calories, protein_g, carbs_g, fat_g, fiber_g, source, photo_path, confidence)
+       VALUES (@login_id, @meal_type, @food_name, @portion_notes, @calories, @protein_g, @carbs_g, @fat_g, @fiber_g, @source, @photo_path, @confidence)`
     )
     .run({
+      login_id: req.loginId,
       meal_type,
       food_name: food_name.trim().slice(0, 300),
       portion_notes: portion_notes ?? null,
@@ -108,12 +119,12 @@ router.post('/meal', (req, res) => {
       confidence: clampNum(confidence, { min: 0, max: 1, fallback: 1 }),
     });
 
-  recordEpisode('anna', `Logged ${meal_type}: ${food_name}`, 'meals', info.lastInsertRowid);
+  recordEpisode(req.loginId, 'anna', `Logged ${meal_type}: ${food_name}`, 'meals', info.lastInsertRowid);
   const meal = db.prepare('SELECT * FROM meals WHERE id = ?').get(info.lastInsertRowid);
+  triggerFleetDiscussion(req.loginId, { type: 'meal_logged', meal });
   res.json({ meal });
 });
 
-// Anna parses "had 2 rotis and dal for lunch" -> structured macros (no save).
 const PARSE_SYSTEM = `You parse meal descriptions into nutrition data. User is Indian, eggetarian.
 Default portions to typical home-cooked Indian servings unless specified.
 Return JSON only:
@@ -170,10 +181,11 @@ router.post('/workout', (req, res) => {
 
   const info = db
     .prepare(
-      `INSERT INTO workouts (workout_type, workout_name, duration_min, calories_burned, intensity, rpe, notes)
-       VALUES (@workout_type, @workout_name, @duration_min, @calories_burned, @intensity, @rpe, @notes)`
+      `INSERT INTO workouts (login_id, workout_type, workout_name, duration_min, calories_burned, intensity, rpe, notes)
+       VALUES (@login_id, @workout_type, @workout_name, @duration_min, @calories_burned, @intensity, @rpe, @notes)`
     )
     .run({
+      login_id: req.loginId,
       workout_type,
       workout_name: workout_name?.slice(0, 120) ?? null,
       duration_min: Math.round(clampNum(duration_min, { min: 0, max: 600 })),
@@ -203,21 +215,31 @@ router.post('/workout', (req, res) => {
     });
   }
 
-  recordEpisode('bala', `Completed ${workout_name || workout_type}`, 'workouts', info.lastInsertRowid);
+  recordEpisode(
+    req.loginId,
+    'bala',
+    `Completed ${workout_name || workout_type}`,
+    'workouts',
+    info.lastInsertRowid
+  );
   const workout = db.prepare('SELECT * FROM workouts WHERE id = ?').get(info.lastInsertRowid);
+  triggerFleetDiscussion(req.loginId, { type: 'workout_logged', workout });
   res.json({ workout });
 });
 
 // ---- Water ------------------------------------------------------------------
 router.post('/water', (req, res) => {
   const amount = Math.round(clampNum(req.body?.amount_ml, { min: 1, max: 5000, fallback: 250 }));
-  const info = db.prepare('INSERT INTO water_log (amount_ml) VALUES (?)').run(amount);
-  recordEpisode('nidra', `Drank ${amount}ml water`, 'water_log', info.lastInsertRowid);
+  const info = db
+    .prepare('INSERT INTO water_log (login_id, amount_ml) VALUES (?, ?)')
+    .run(req.loginId, amount);
+  recordEpisode(req.loginId, 'nidra', `Drank ${amount}ml water`, 'water_log', info.lastInsertRowid);
   const today = db
     .prepare(
-      "SELECT COALESCE(SUM(amount_ml),0) AS ml FROM water_log WHERE date(logged_at) = date('now','localtime')"
+      `SELECT COALESCE(SUM(amount_ml),0) AS ml FROM water_log
+       WHERE login_id = ? AND date(logged_at) = date('now','localtime')`
     )
-    .get();
+    .get(req.loginId);
   res.json({ added_ml: amount, total_ml: today.ml });
 });
 
@@ -227,11 +249,13 @@ router.post('/weight', (req, res) => {
   if (!Number.isFinite(weight)) return res.status(400).json({ error: 'valid weight_kg required' });
   const bf = req.body?.body_fat_pct != null ? clampNum(req.body.body_fat_pct, { min: 1, max: 70 }) : null;
   const info = db
-    .prepare('INSERT INTO weight_log (weight_kg, body_fat_pct) VALUES (?, ?)')
-    .run(weight, bf);
-  // Keep the profile's current weight in sync so targets recompute correctly.
-  db.prepare('UPDATE user_profile SET current_weight_kg = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1').run(weight);
-  recordEpisode('agni', `Weighed in at ${weight}kg`, 'weight_log', info.lastInsertRowid);
+    .prepare('INSERT INTO weight_log (login_id, weight_kg, body_fat_pct) VALUES (?, ?, ?)')
+    .run(req.loginId, weight, bf);
+  db.prepare(
+    'UPDATE user_profile SET current_weight_kg = ?, updated_at = CURRENT_TIMESTAMP WHERE login_id = ?'
+  ).run(weight, req.loginId);
+  recordEpisode(req.loginId, 'agni', `Weighed in at ${weight}kg`, 'weight_log', info.lastInsertRowid);
+  triggerFleetDiscussion(req.loginId, { type: 'weight_logged', weight_kg: weight });
   res.json({ weight_kg: weight });
 });
 
@@ -241,10 +265,10 @@ router.get('/weight/history', (req, res) => {
     .prepare(
       `SELECT weight_kg, date(logged_at) AS day, logged_at
        FROM weight_log
-       WHERE logged_at >= datetime('now', ?, 'localtime')
+       WHERE login_id = ? AND logged_at >= datetime('now', ?, 'localtime')
        ORDER BY logged_at`
     )
-    .all(`-${days} days`);
+    .all(req.loginId, `-${days} days`);
   res.json({ history: rows });
 });
 
@@ -253,17 +277,18 @@ router.post('/sleep', (req, res) => {
   const { bedtime, wake_time, duration_hours, quality, notes } = req.body ?? {};
   const info = db
     .prepare(
-      `INSERT INTO sleep_log (bedtime, wake_time, duration_hours, quality, notes)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO sleep_log (login_id, bedtime, wake_time, duration_hours, quality, notes)
+       VALUES (?, ?, ?, ?, ?, ?)`
     )
     .run(
+      req.loginId,
       bedtime ?? null,
       wake_time ?? null,
       duration_hours != null ? clampNum(duration_hours, { min: 0, max: 24 }) : null,
       quality != null ? Math.round(clampNum(quality, { min: 1, max: 10 })) : null,
       notes?.slice(0, 500) ?? null
     );
-  recordEpisode('nidra', `Slept ${duration_hours ?? '?'}h`, 'sleep_log', info.lastInsertRowid);
+  recordEpisode(req.loginId, 'nidra', `Slept ${duration_hours ?? '?'}h`, 'sleep_log', info.lastInsertRowid);
   res.json({ id: info.lastInsertRowid });
 });
 

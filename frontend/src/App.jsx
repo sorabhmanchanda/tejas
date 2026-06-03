@@ -1,14 +1,24 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from './lib/api.js';
+import { api, setApiLoginId } from './lib/api.js';
+import { APP_VERSION } from './lib/appVersion.js';
+import { clearLoginId, getLoginId, setLoginId } from './lib/session.js';
+import Login from './components/Login.jsx';
 import Onboarding from './components/Onboarding.jsx';
 import TopBar from './components/TopBar.jsx';
 import AgentFleetGrid from './components/AgentFleetGrid.jsx';
+import FleetThread from './components/FleetThread.jsx';
 import TodaysPlan from './components/TodaysPlan.jsx';
 import QuickLogBar from './components/QuickLogBar.jsx';
 import MorningBriefing from './components/MorningBriefing.jsx';
 import WeightChart from './components/WeightChart.jsx';
 import ChatDrawer from './components/ChatDrawer.jsx';
 
+/**
+ * Flow:
+ *   launch     → login ID only (always first visit / after sign-out)
+ *   onboarding → fleet setup (new login ID, no profile on server)
+ *   ready      → dashboard (existing login ID with profile)
+ */
 function LoadingScreen() {
   return (
     <div className="grid min-h-screen place-items-center">
@@ -20,8 +30,14 @@ function LoadingScreen() {
   );
 }
 
+function applySession(loginId) {
+  setLoginId(loginId);
+  setApiLoginId(loginId);
+}
+
 export default function App() {
-  const [booting, setBooting] = useState(true);
+  const [phase, setPhase] = useState('booting');
+  const [loginId, setLoginIdState] = useState('');
   const [profile, setProfile] = useState(null);
   const [today, setToday] = useState(null);
   const [agents, setAgents] = useState([]);
@@ -30,6 +46,7 @@ export default function App() {
   const [weightHistory, setWeightHistory] = useState([]);
   const [generating, setGenerating] = useState(false);
   const [chatAgent, setChatAgent] = useState(null);
+  const [fleetTick, setFleetTick] = useState(0);
 
   const refreshData = useCallback(async () => {
     const [todayRes, agentsRes, findingsRes, weightRes, briefingRes] = await Promise.all([
@@ -44,21 +61,98 @@ export default function App() {
     setFindings(findingsRes.findings || []);
     setWeightHistory(weightRes.history || []);
     setBriefing(briefingRes.briefing || null);
+    setFleetTick((t) => t + 1);
   }, []);
+
+  const loadProfile = useCallback(async () => {
+    const { profile: p } = await api.getProfile();
+    setProfile(p);
+    if (p) await refreshData();
+    return p;
+  }, [refreshData]);
+
+  const goToLaunch = useCallback(() => {
+    clearLoginId();
+    setApiLoginId('');
+    setLoginIdState('');
+    setProfile(null);
+    setToday(null);
+    setAgents([]);
+    setBriefing(null);
+    setFindings([]);
+    setPhase('launch');
+  }, []);
+
+  /** Resume saved login ID — skip login form only when server confirms profile exists. */
+  const resumeSession = useCallback(
+    async (storedLoginId) => {
+      applySession(storedLoginId);
+      setLoginIdState(storedLoginId);
+      const session = await api.startSession(storedLoginId);
+      if (session.hasProfile) {
+        const p = await loadProfile();
+        setPhase(p ? 'ready' : 'onboarding');
+      } else {
+        setProfile(null);
+        setPhase('onboarding');
+      }
+    },
+    [loadProfile]
+  );
 
   useEffect(() => {
     (async () => {
       try {
-        const { profile: p } = await api.getProfile();
-        setProfile(p);
-        if (p) await refreshData();
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('fresh') === '1') {
+          clearLoginId();
+          window.history.replaceState({}, '', window.location.pathname);
+          setPhase('launch');
+          return;
+        }
+
+        const stored = getLoginId();
+        if (!stored) {
+          setPhase('launch');
+          return;
+        }
+
+        await resumeSession(stored);
       } catch {
-        /* backend may be starting */
-      } finally {
-        setBooting(false);
+        goToLaunch();
       }
     })();
-  }, [refreshData]);
+  }, [resumeSession, goToLaunch]);
+
+  async function handleLoggedIn(session) {
+    applySession(session.loginId);
+    setLoginIdState(session.loginId);
+    setToday(null);
+
+    if (session.hasProfile) {
+      const p = await loadProfile();
+      setPhase(p ? 'ready' : 'onboarding');
+    } else {
+      setProfile(null);
+      setPhase('onboarding');
+    }
+  }
+
+  function switchUser() {
+    goToLaunch();
+  }
+
+  async function resetMyData() {
+    if (!window.confirm('Reset all your Tejas data for this login ID? This cannot be undone.')) return;
+    await api.resetMyData();
+    setProfile(null);
+    setToday(null);
+    setAgents([]);
+    setBriefing(null);
+    setFindings([]);
+    setWeightHistory([]);
+    setPhase('onboarding');
+  }
 
   async function generateBriefing() {
     setGenerating(true);
@@ -79,10 +173,33 @@ export default function App() {
     api.getAgents().then((d) => setAgents(d.agents || [])).catch(() => {});
   }
 
-  if (booting) return <LoadingScreen />;
-  if (!profile) return <Onboarding onComplete={(p) => { setProfile(p); refreshData(); }} />;
+  if (phase === 'booting') return <LoadingScreen />;
 
-  // Derived week stats for the bottom bar.
+  // Path 1 & 2 entry: login ID screen (never show setup without passing this).
+  if (phase === 'launch' || !loginId) {
+    return <Login onLoggedIn={handleLoggedIn} appVersion={APP_VERSION} />;
+  }
+
+  // Path 2b: new account — setup then dashboard.
+  if (phase === 'onboarding') {
+    return (
+      <Onboarding
+        loginId={loginId}
+        onSwitchUser={switchUser}
+        onComplete={(p) => {
+          setProfile(p);
+          setPhase('ready');
+          refreshData();
+        }}
+      />
+    );
+  }
+
+  // Path 1: existing account — dashboard.
+  if (phase !== 'ready' || !profile) {
+    return <LoadingScreen />;
+  }
+
   const weeklyDeficit =
     today && profile
       ? Math.round((profile.daily_calorie_target - (today.totals?.calories ?? 0)) || 0)
@@ -93,22 +210,27 @@ export default function App() {
     avgSleep: today?.last_sleep?.duration_hours ?? '—',
   };
 
-  // Simple streak proxy: distinct logged days isn't loaded here; use 1 if logged today.
   const streak = (today?.meals?.length ?? 0) > 0 ? 1 : 0;
 
   return (
     <div className="min-h-screen">
-      <TopBar profile={profile} today={today} streak={streak} />
+      <TopBar
+        profile={profile}
+        today={today}
+        streak={streak}
+        loginId={loginId}
+        onSwitchUser={switchUser}
+        onResetData={resetMyData}
+      />
 
       <main className="mx-auto max-w-[1400px] px-4 py-5 lg:px-6">
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.85fr_1fr]">
-          {/* LEFT — agent fleet */}
           <div className="space-y-5">
             <AgentFleetGrid agents={agents} onAgentClick={setChatAgent} />
+            <FleetThread refreshKey={fleetTick} />
             <WeightChart history={weightHistory} stats={stats} />
           </div>
 
-          {/* RIGHT — plan, quick log, briefing */}
           <div className="space-y-5">
             <TodaysPlan
               profile={profile}

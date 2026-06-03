@@ -51,7 +51,7 @@ function useNextBriefing() {
   return label;
 }
 
-export default function TopBar({ profile, today, streak = 0 }) {
+export default function TopBar({ profile, today, streak = 0, loginId, onSwitchUser, onResetData }) {
   const nextBriefing = useNextBriefing();
   const dateStr = new Date().toLocaleDateString('en-IN', {
     weekday: 'long',
@@ -112,8 +112,36 @@ export default function TopBar({ profile, today, streak = 0 }) {
           </div>
         </div>
 
-        {/* Streak + countdown */}
+        {/* User + streak */}
         <div className="flex items-center gap-3">
+          {loginId && (
+            <div className="relative group">
+              <button
+                type="button"
+                className="pill border-line bg-base/80 text-zinc-300 hover:border-saffron/40"
+                title="Account"
+              >
+                <span className="text-zinc-500">@</span>
+                <span className="max-w-[100px] truncate font-medium">{loginId}</span>
+              </button>
+              <div className="invisible absolute right-0 top-full z-50 mt-1 min-w-[180px] rounded-xl border border-line bg-card py-1 opacity-0 shadow-lg transition group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
+                <button
+                  type="button"
+                  className="block w-full px-4 py-2 text-left text-sm text-zinc-300 hover:bg-base/80"
+                  onClick={onSwitchUser}
+                >
+                  Switch user
+                </button>
+                <button
+                  type="button"
+                  className="block w-full px-4 py-2 text-left text-sm text-red-300 hover:bg-base/80"
+                  onClick={onResetData}
+                >
+                  Reset my data
+                </button>
+              </div>
+            </div>
+          )}
           <div className="pill border-saffron/30 bg-saffron/10 text-saffron">
             <span>🔥</span>
             <span className="num font-semibold">{streak}</span>

@@ -18,7 +18,7 @@ training, and running. Five agents, one daily rhythm, photo-first logging.
 
 ## Killer features
 
-1. **Photo-first food logging** — snap a thali, Claude vision returns structured
+1. **Photo-first food logging** — snap a thali, Gemini vision returns structured
    macros (knows dal, sabzi, paneer, eggs natively).
 2. **Voice logging** — "had 2 rotis and dal for lunch" → parsed automatically.
 3. **Morning briefing + evening check-in** — a daily rhythm, not passive tracking.
@@ -30,7 +30,7 @@ training, and running. Five agents, one daily rhythm, photo-first logging.
 - **Frontend:** React (Vite) + Tailwind CSS + Recharts
 - **Backend:** Node.js + Express
 - **Database:** SQLite (better-sqlite3)
-- **AI:** Anthropic Claude (vision for food photos, chat per agent)
+- **AI:** Google Gemini (`gemini-2.5-flash` — vision, chat, briefings)
 - **PWA:** installable on your phone (manifest + service worker)
 
 ## Quick start
@@ -41,9 +41,9 @@ cd tejas
 npm install          # installs root dev dep (concurrently)
 npm run install:all  # installs backend + frontend deps
 
-# 2. Add your Anthropic key (optional — app runs in MOCK mode without it)
+# 2. Add your Gemini key (optional — app runs in MOCK mode without it)
 cp backend/.env.example backend/.env
-#   then edit backend/.env and set ANTHROPIC_API_KEY
+#   then edit backend/.env and set GEMINI_API_KEY
 
 # 3. Run both servers
 npm run dev
@@ -55,7 +55,9 @@ Open http://localhost:5173, complete onboarding, and start logging.
 
 > **No API key?** The app still works end-to-end in **MOCK mode**: the photo
 > analyzer, meal parser, chat, and briefing return realistic placeholder data so
-> you can explore the full UI. Add `ANTHROPIC_API_KEY` to switch to live Claude.
+> you can explore the full UI. Add `GEMINI_API_KEY` to switch to live Gemini.
+
+Get a free key: [Google AI Studio](https://aistudio.google.com/apikey) (starts with `AIza...`).
 
 ## Safety guardrails (built in)
 
@@ -70,7 +72,7 @@ Open http://localhost:5173, complete onboarding, and start logging.
 
 ```
 tejas/
-├── backend/   Express API, SQLite, Claude calls, nutrition math + guardrails
+├── backend/   Express API, SQLite, Gemini (lib/ai.js), nutrition + guardrails
 └── frontend/  React UI shell (Vite + Tailwind), PWA assets
 ```
 
@@ -85,4 +87,4 @@ photo gallery, recipe generation, restaurant mode, one-command deploy.
 
 ---
 
-*Built for: Sorabh — eggetarian, cutting, gym + runs. Powered by Claude + SQLite + your daily logs.*
+*Built for: Sorabh — eggetarian, cutting, gym + runs. Powered by Gemini + SQLite + your daily logs.*

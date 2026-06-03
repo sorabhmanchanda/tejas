@@ -5,9 +5,16 @@
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
--- USER PROFILE (single user, single row)
+-- LOGIN ACCOUNTS (no password — pick a login ID)
+CREATE TABLE IF NOT EXISTS app_users (
+  login_id    TEXT PRIMARY KEY,
+  created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+  last_seen   DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- USER PROFILE (one row per login_id)
 CREATE TABLE IF NOT EXISTS user_profile (
-  id                    INTEGER PRIMARY KEY CHECK (id = 1),
+  login_id              TEXT PRIMARY KEY,
   name                  TEXT NOT NULL,
   age                   INTEGER NOT NULL,
   height_cm             INTEGER NOT NULL,
@@ -44,6 +51,7 @@ CREATE TABLE IF NOT EXISTS agents (
 -- MEALS
 CREATE TABLE IF NOT EXISTS meals (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  login_id        TEXT NOT NULL,
   meal_type       TEXT NOT NULL,             -- breakfast|lunch|dinner|snack
   food_name       TEXT NOT NULL,             -- "2 rotis + dal tadka + bhindi sabzi"
   portion_notes   TEXT,                       -- "1 katori dal, medium roti"
@@ -54,13 +62,14 @@ CREATE TABLE IF NOT EXISTS meals (
   fiber_g         REAL DEFAULT 0,
   source          TEXT NOT NULL,             -- manual|photo|voice
   photo_path      TEXT,                       -- if source=photo
-  confidence      REAL DEFAULT 1.0,          -- 0-1 from Claude vision
+  confidence      REAL DEFAULT 1.0,          -- 0-1 from Gemini vision
   logged_at       DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 -- WORKOUTS
 CREATE TABLE IF NOT EXISTS workouts (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  login_id          TEXT NOT NULL,
   workout_type      TEXT NOT NULL,           -- gym|run|cardio|mobility
   workout_name      TEXT,                     -- "Push Day", "5K Easy"
   duration_min      INTEGER,
@@ -88,6 +97,7 @@ CREATE TABLE IF NOT EXISTS exercise_sets (
 -- WEIGHT LOG
 CREATE TABLE IF NOT EXISTS weight_log (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  login_id      TEXT NOT NULL,
   weight_kg     REAL NOT NULL,
   body_fat_pct  REAL,
   logged_at     DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -96,6 +106,7 @@ CREATE TABLE IF NOT EXISTS weight_log (
 -- WATER LOG
 CREATE TABLE IF NOT EXISTS water_log (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  login_id    TEXT NOT NULL,
   amount_ml   INTEGER NOT NULL,
   logged_at   DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -103,6 +114,7 @@ CREATE TABLE IF NOT EXISTS water_log (
 -- SLEEP LOG
 CREATE TABLE IF NOT EXISTS sleep_log (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  login_id        TEXT NOT NULL,
   bedtime         DATETIME,
   wake_time       DATETIME,
   duration_hours  REAL,
@@ -115,6 +127,7 @@ CREATE TABLE IF NOT EXISTS sleep_log (
 -- EPISODES (raw memory)
 CREATE TABLE IF NOT EXISTS episodes (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  login_id      TEXT NOT NULL,
   agent_id      TEXT NOT NULL REFERENCES agents(id),
   content       TEXT NOT NULL,
   source_table  TEXT,                         -- meals|workouts|weight_log etc
@@ -126,6 +139,7 @@ CREATE TABLE IF NOT EXISTS episodes (
 -- ENTITIES (long-term knowledge nodes)
 CREATE TABLE IF NOT EXISTS entities (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  login_id      TEXT NOT NULL,
   agent_id      TEXT NOT NULL REFERENCES agents(id),
   name          TEXT NOT NULL,                -- "Weekend overeating pattern"
   type          TEXT NOT NULL,                -- pattern|food|exercise|metric|goal
@@ -138,6 +152,7 @@ CREATE TABLE IF NOT EXISTS entities (
 -- FINDINGS
 CREATE TABLE IF NOT EXISTS findings (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  login_id      TEXT NOT NULL,
   agent_id      TEXT NOT NULL REFERENCES agents(id),
   title         TEXT NOT NULL,
   body          TEXT NOT NULL,
@@ -151,15 +166,29 @@ CREATE TABLE IF NOT EXISTS findings (
 -- BRIEFINGS
 CREATE TABLE IF NOT EXISTS briefings (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  login_id      TEXT NOT NULL,
   briefing_type TEXT NOT NULL,                -- morning|evening|weekly
   content       TEXT NOT NULL,
   finding_ids   TEXT,                          -- JSON array
   created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- FLEET GROUP CHAT (agents talk to each other; user reads the thread)
+CREATE TABLE IF NOT EXISTS fleet_messages (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  login_id    TEXT NOT NULL,
+  agent_id    TEXT REFERENCES agents(id),
+  role        TEXT NOT NULL,                  -- system|agent
+  content     TEXT NOT NULL,
+  event_type  TEXT,                             -- workout_logged|meal_logged|weight_logged
+  source_id   INTEGER,
+  created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- CHAT
 CREATE TABLE IF NOT EXISTS chat_messages (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  login_id    TEXT NOT NULL,
   agent_id    TEXT NOT NULL REFERENCES agents(id),
   role        TEXT NOT NULL,                  -- user|assistant
   content     TEXT NOT NULL,

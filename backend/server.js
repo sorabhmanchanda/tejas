@@ -7,11 +7,13 @@ import { hasApiKey, MODEL } from './lib/ai.js';
 import { UPLOAD_DIR } from './lib/paths.js';
 import { startScheduler } from './scheduler.js';
 
+import authRoutes from './routes/auth.js';
 import profileRoutes from './routes/profile.js';
 import logRoutes from './routes/log.js';
 import photoRoutes from './routes/photoAnalyze.js';
 import agentRoutes from './routes/agents.js';
 import briefingRoutes from './routes/briefing.js';
+import fleetRoutes from './routes/fleet.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -25,6 +27,9 @@ function corsOptions() {
       if (!origin || origins.includes(origin)) callback(null, true);
       else callback(new Error('Not allowed by CORS'));
     },
+    // Browser must be allowed to send the login-id header from Vercel → Railway.
+    allowedHeaders: ['Content-Type', 'X-Tejas-User'],
+    methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
   };
 }
 
@@ -44,11 +49,13 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
+app.use('/api/auth', authRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/log', logRoutes);
 app.use('/api/photo', photoRoutes);
 app.use('/api/agents', agentRoutes);
 app.use('/api/briefing', briefingRoutes);
+app.use('/api/fleet', fleetRoutes);
 
 // Generic error handler — never leak stack traces to clients.
 app.use((err, _req, res, _next) => {

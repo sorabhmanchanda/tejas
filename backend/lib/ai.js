@@ -1,9 +1,8 @@
 // =============================================
-// Provider-agnostic AI client — backed by Google Gemini.
-// Exposes Anthropic-style helpers (callAI / parseJsonResponse / hasApiKey) so
-// the rest of the app can stay unchanged. Accepts the same message shape:
+// Google Gemini API client (Tejas uses Gemini only — no Anthropic/Claude).
+// Message shape for routes:
 //   messages: [{ role: 'user'|'assistant', content: string | block[] }]
-// where an image block is { type:'image', source:{ media_type, data } } (base64).
+// Image blocks: { type:'image', source:{ media_type, data } } (base64).
 // =============================================
 
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -20,7 +19,7 @@ export function hasApiKey() {
   return Boolean(getApiKey());
 }
 
-// Translate one Anthropic-style content value into Gemini "parts".
+// Translate app message content into Gemini "parts".
 function toParts(content) {
   if (typeof content === 'string') {
     return [{ text: content }];
@@ -42,12 +41,28 @@ function toParts(content) {
   return [{ text: String(content ?? '') }];
 }
 
-// Map roles: Anthropic uses user|assistant; Gemini uses user|model.
+// Map roles and merge consecutive same-role turns (Gemini requires user/model alternation).
 function toGeminiContents(messages) {
-  return messages.map((m) => ({
+  const mapped = messages.map((m) => ({
     role: m.role === 'assistant' ? 'model' : 'user',
     parts: toParts(m.content),
   }));
+
+  const merged = [];
+  for (const msg of mapped) {
+    const last = merged[merged.length - 1];
+    if (last && last.role === msg.role) {
+      last.parts.push(...msg.parts);
+    } else {
+      merged.push({ role: msg.role, parts: [...msg.parts] });
+    }
+  }
+
+  // History must start with a user turn.
+  if (merged.length > 0 && merged[0].role === 'model') {
+    merged.unshift({ role: 'user', parts: [{ text: 'Continue.' }] });
+  }
+  return merged;
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -56,7 +71,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * Low-level call to the Gemini generateContent API.
  * @param {object} opts
  * @param {string} [opts.system]   System instruction.
- * @param {Array}  opts.messages   Anthropic-style messages.
+ * @param {Array}  opts.messages   Chat messages (user|assistant).
  * @param {number} [opts.maxTokens]
  * @param {string} [opts.model]
  * @param {boolean} [opts.json]    Ask Gemini to return application/json.
@@ -101,12 +116,15 @@ export async function callAI({ system, messages, maxTokens = 1000, model = MODEL
     if (response.ok) {
       const data = await response.json();
       const parts = data?.candidates?.[0]?.content?.parts ?? [];
-      const text = parts.map((p) => p.text || '').join('').trim();
-      if (!text) {
-        const reason = data?.candidates?.[0]?.finishReason || 'empty';
-        throw new Error(`Gemini returned no text (finishReason: ${reason})`);
-      }
-      return text;
+      const text = parts
+        .map((p) => p.text ?? '')
+        .join('')
+        .trim();
+      if (text) return text;
+      const reason = data?.candidates?.[0]?.finishReason || 'empty';
+      lastErr = new Error(`Gemini returned no text (finishReason: ${reason})`);
+      await sleep(400 * (attempt + 1));
+      continue;
     }
 
     if (response.status === 429 || response.status >= 500) {
@@ -136,6 +154,3 @@ export function parseJsonResponse(text) {
     throw new Error('Model did not return valid JSON');
   }
 }
-
-// Backwards-compatible alias so existing imports keep working.
-export const callClaude = callAI;

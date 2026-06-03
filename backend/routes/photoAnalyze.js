@@ -10,6 +10,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { callAI, parseJsonResponse, hasApiKey } from '../lib/ai.js';
 import { UPLOAD_DIR } from '../lib/paths.js';
+import { requireLoginId } from '../lib/user.js';
 
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const EXT_BY_MIME = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' };
@@ -90,6 +91,7 @@ function mockAnalysis() {
 }
 
 const router = Router();
+router.use(requireLoginId);
 
 router.post('/analyze', (req, res) => {
   upload.single('photo')(req, res, async (err) => {

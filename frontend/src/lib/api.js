@@ -1,15 +1,35 @@
 // Tiny fetch wrapper around the Tejas backend.
 // Dev: Vite proxies /api → localhost:3001. Production: set VITE_API_URL on Vercel.
+import { getLoginId } from './session.js';
+
 const API_ROOT = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 const BASE = API_ROOT ? `${API_ROOT}/api` : '/api';
 
-async function request(path, { method = 'GET', body, isForm = false } = {}) {
+// Fallback when localStorage is slow/unavailable (e.g. iOS Safari) — set from App after login.
+let activeLoginId = '';
+
+export function setApiLoginId(loginId) {
+  activeLoginId = typeof loginId === 'string' ? loginId : '';
+}
+
+function resolveLoginId() {
+  return getLoginId() || activeLoginId;
+}
+
+async function request(path, { method = 'GET', body, isForm = false, auth = true } = {}) {
   const opts = { method, headers: {} };
+  if (auth) {
+    const loginId = resolveLoginId();
+    if (!loginId) {
+      throw new Error('Not signed in. Go back and pick a login ID first.');
+    }
+    opts.headers['X-Tejas-User'] = loginId;
+  }
   if (body && !isForm) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
   } else if (body && isForm) {
-    opts.body = body; // FormData — let the browser set the boundary
+    opts.body = body;
   }
   const res = await fetch(`${BASE}${path}`, opts);
   const data = await res.json().catch(() => ({}));
@@ -20,7 +40,14 @@ async function request(path, { method = 'GET', body, isForm = false } = {}) {
 }
 
 export const api = {
-  health: () => request('/health'),
+  health: () => request('/health', { auth: false }),
+
+  // Auth (no password)
+  listUsers: () => request('/auth/users', { auth: false }),
+  startSession: (loginId) =>
+    request('/auth/session', { method: 'POST', body: { loginId }, auth: false }),
+  resetMyData: () => request('/auth/reset', { method: 'POST' }),
+  resetAllData: () => request('/auth/reset-all', { method: 'POST' }),
 
   // Profile / onboarding
   getProfile: () => request('/profile'),
@@ -52,6 +79,11 @@ export const api = {
   getChat: (agentId) => request(`/agents/${agentId}/chat`),
   sendChat: (agentId, message) =>
     request(`/agents/${agentId}/chat`, { method: 'POST', body: { message } }),
+
+  // Fleet group chat
+  getFleetMessages: (since = 0) =>
+    request(`/fleet/messages?since=${since}&limit=80`),
+  fleetStatus: () => request('/fleet/status'),
 
   // Briefing
   latestBriefing: () => request('/briefing/latest'),

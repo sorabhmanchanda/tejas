@@ -5,17 +5,21 @@
 import { Router } from 'express';
 import db from '../db/database.js';
 import { callAI, hasApiKey } from '../lib/ai.js';
+import { requireLoginId } from '../lib/user.js';
 
 const router = Router();
+router.use(requireLoginId);
 
-function getProfile() {
-  return db.prepare('SELECT * FROM user_profile WHERE id = 1').get();
+function getProfile(loginId) {
+  return db.prepare('SELECT * FROM user_profile WHERE login_id = ?').get(loginId);
 }
 
-function getYesterday() {
+function getYesterday(loginId) {
   const meals = db
-    .prepare("SELECT * FROM meals WHERE date(logged_at) = date('now','-1 day','localtime')")
-    .all();
+    .prepare(
+      `SELECT * FROM meals WHERE login_id = ? AND date(logged_at) = date('now','-1 day','localtime')`
+    )
+    .all(loginId);
   const totals = meals.reduce(
     (acc, m) => ({
       calories: acc.calories + m.calories,
@@ -25,13 +29,18 @@ function getYesterday() {
   );
   const water = db
     .prepare(
-      "SELECT COALESCE(SUM(amount_ml),0) AS ml FROM water_log WHERE date(logged_at) = date('now','-1 day','localtime')"
+      `SELECT COALESCE(SUM(amount_ml),0) AS ml FROM water_log
+       WHERE login_id = ? AND date(logged_at) = date('now','-1 day','localtime')`
     )
-    .get().ml;
+    .get(loginId).ml;
   const workout = db
-    .prepare("SELECT * FROM workouts WHERE date(completed_at) = date('now','-1 day','localtime') LIMIT 1")
-    .get();
-  const sleep = db.prepare('SELECT * FROM sleep_log ORDER BY created_at DESC LIMIT 1').get();
+    .prepare(
+      `SELECT * FROM workouts WHERE login_id = ? AND date(completed_at) = date('now','-1 day','localtime') LIMIT 1`
+    )
+    .get(loginId);
+  const sleep = db
+    .prepare('SELECT * FROM sleep_log WHERE login_id = ? ORDER BY created_at DESC LIMIT 1')
+    .get(loginId);
   return {
     calories: totals.calories,
     protein_g: Math.round(totals.protein_g),
@@ -85,9 +94,10 @@ Write today's briefing.`,
   });
 }
 
-// Seed a few starter findings the first time so the briefing feed isn't empty.
-function ensureSeedFindings(profile) {
-  const count = db.prepare('SELECT COUNT(*) AS c FROM findings').get().c;
+function ensureSeedFindings(loginId, profile) {
+  const count = db
+    .prepare('SELECT COUNT(*) AS c FROM findings WHERE login_id = ?')
+    .get(loginId).c;
   if (count > 0 || !profile) return;
   const seed = [
     {
@@ -110,32 +120,33 @@ function ensureSeedFindings(profile) {
     },
   ];
   const stmt = db.prepare(
-    'INSERT INTO findings (agent_id, title, body, severity) VALUES (@agent_id, @title, @body, @severity)'
+    'INSERT INTO findings (login_id, agent_id, title, body, severity) VALUES (@login_id, @agent_id, @title, @body, @severity)'
   );
-  seed.forEach((f) => stmt.run(f));
+  seed.forEach((f) => stmt.run({ login_id: loginId, ...f }));
 }
 
-// GET latest briefing (most recent stored, today only).
-router.get('/latest', (_req, res) => {
+router.get('/latest', (req, res) => {
   const briefing = db
     .prepare(
-      "SELECT * FROM briefings WHERE briefing_type='morning' AND date(created_at)=date('now','localtime') ORDER BY created_at DESC LIMIT 1"
+      `SELECT * FROM briefings WHERE login_id = ? AND briefing_type='morning'
+       AND date(created_at)=date('now','localtime') ORDER BY created_at DESC LIMIT 1`
     )
-    .get();
+    .get(req.loginId);
   res.json({ briefing: briefing ?? null });
 });
 
-// POST generate today's morning briefing.
 router.post('/morning', async (req, res) => {
-  const profile = getProfile();
+  const profile = getProfile(req.loginId);
   if (!profile) return res.status(400).json({ error: 'Complete onboarding first' });
 
-  ensureSeedFindings(profile);
+  ensureSeedFindings(req.loginId, profile);
 
   const findings = db
-    .prepare("SELECT * FROM findings WHERE status = 'pending' ORDER BY created_at DESC")
-    .all();
-  const yesterday = getYesterday();
+    .prepare(
+      "SELECT * FROM findings WHERE login_id = ? AND status = 'pending' ORDER BY created_at DESC"
+    )
+    .all(req.loginId);
+  const yesterday = getYesterday(req.loginId);
   const todayPlan = { workout_name: req.body?.workout_name || 'Push Day — 45 min' };
 
   let content;
@@ -158,8 +169,10 @@ Watchouts: start water early, and don't skip the first set warmups.
 
   const findingIds = JSON.stringify(findings.map((f) => f.id));
   const info = db
-    .prepare("INSERT INTO briefings (briefing_type, content, finding_ids) VALUES ('morning', ?, ?)")
-    .run(content, findingIds);
+    .prepare(
+      "INSERT INTO briefings (login_id, briefing_type, content, finding_ids) VALUES (?, 'morning', ?, ?)"
+    )
+    .run(req.loginId, content, findingIds);
 
   res.json({
     briefing: db.prepare('SELECT * FROM briefings WHERE id = ?').get(info.lastInsertRowid),

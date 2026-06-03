@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DB_DIR } from '../lib/paths.js';
+import { runMigrations } from './migrate.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -16,6 +17,7 @@ db.pragma('foreign_keys = ON');
 // Apply schema (idempotent — uses IF NOT EXISTS / INSERT OR IGNORE).
 const schema = fs.readFileSync(SCHEMA_PATH, 'utf8');
 db.exec(schema);
+runMigrations(db);
 
 // Run directly (npm run init-db) to (re)initialize the database.
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('database.js')) {

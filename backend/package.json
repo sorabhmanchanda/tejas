@@ -1,7 +1,7 @@
 {
   "name": "tejas-backend",
   "version": "0.1.0",
-  "description": "Tejas — personal health agent fleet (backend)",
+  "description": "Tejas backend — Express API + SQLite + Google Gemini",
   "type": "module",
   "main": "server.js",
   "scripts": {

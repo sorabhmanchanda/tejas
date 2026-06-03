@@ -57,7 +57,7 @@ function TargetPreview({ targets }) {
   );
 }
 
-export default function Onboarding({ onComplete }) {
+export default function Onboarding({ loginId, onComplete, onSwitchUser }) {
   const [form, setForm] = useState({
     name: '',
     age: 30,
@@ -106,17 +106,25 @@ export default function Onboarding({ onComplete }) {
   return (
     <div className="min-h-screen px-4 py-8">
       <div className="mx-auto max-w-lg">
-        {/* Brand */}
         <div className="mb-6 text-center">
-          <div className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-2xl border border-saffron/30 bg-saffron/10 text-saffron shadow-glow">
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 2c1.5 3 4 4.5 4 8a4 4 0 1 1-8 0c0-1.2.4-2.2 1-3-.2 2 1 3 1.5 3 .8 0 1-1 .5-2 .8.6 1.5 1.6 1.5 3a2.5 2.5 0 1 1-5 0c0-3.5 3-5 4.5-9z" />
-            </svg>
-          </div>
-          <h1 className="font-head text-3xl font-extrabold tracking-tight text-zinc-50">TEJAS</h1>
-          <p className="mt-1 text-sm text-zinc-400">
-            Sanskrit for <span className="text-saffron">radiance</span>. Let's set up your fleet.
+          <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500">
+            Signed in as <span className="text-saffron">@{loginId}</span>
           </p>
+          <h1 className="mt-2 font-head text-2xl font-extrabold tracking-tight text-zinc-50">
+            Let&apos;s set up your fleet
+          </h1>
+          <p className="mt-1 text-sm text-zinc-500">
+            One-time setup — then you&apos;ll land on your dashboard.
+          </p>
+          {onSwitchUser && (
+            <button
+              type="button"
+              onClick={onSwitchUser}
+              className="mt-3 text-xs text-zinc-500 underline decoration-zinc-600 underline-offset-2 hover:text-saffron"
+            >
+              Use a different login ID
+            </button>
+          )}
         </div>
 
         <div className="card space-y-4 p-5">
@@ -175,7 +183,7 @@ export default function Onboarding({ onComplete }) {
           {error && <p className="text-sm text-red-400">{error}</p>}
 
           <button className="btn btn-primary w-full py-3" onClick={submit} disabled={saving}>
-            {saving ? 'Setting up…' : 'Launch Tejas →'}
+            {saving ? 'Saving…' : 'Finish setup →'}
           </button>
         </div>
 

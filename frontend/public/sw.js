@@ -1,5 +1,5 @@
-// Minimal service worker: app-shell cache + network-first for API.
-const CACHE = 'tejas-v2';
+// App shell cache — bump CACHE when deploying UI changes so clients pick up new JS.
+const CACHE = 'tejas-v3-login-first';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg'];
 
 self.addEventListener('install', (event) => {
@@ -19,12 +19,24 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
 
-  // Never cache API or uploads — always go to network.
   if (url.pathname.startsWith('/api') || url.pathname.startsWith('/uploads')) {
     return;
   }
 
-  // Cache-first for the app shell / static assets.
+  // Hashed Vite bundles: network-first so deploys are not stuck on old login/setup UI.
+  if (url.pathname.startsWith('/assets/') || url.pathname.endsWith('.js') || url.pathname.endsWith('.css')) {
+    event.respondWith(
+      fetch(request)
+        .then((res) => {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(request, copy)).catch(() => {});
+          return res;
+        })
+        .catch(() => caches.match(request))
+    );
+    return;
+  }
+
   event.respondWith(
     caches.match(request).then(
       (cached) =>

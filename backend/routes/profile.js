@@ -5,8 +5,10 @@
 import { Router } from 'express';
 import db from '../db/database.js';
 import { computeTargets, calcTDEE } from '../lib/nutrition.js';
+import { requireLoginId } from '../lib/user.js';
 
 const router = Router();
+router.use(requireLoginId);
 
 const ACTIVITY_LEVELS = new Set(['sedentary', 'light', 'moderate', 'active', 'very_active']);
 
@@ -16,8 +18,8 @@ function num(value) {
 }
 
 // GET current profile (null if not onboarded yet).
-router.get('/', (_req, res) => {
-  const profile = db.prepare('SELECT * FROM user_profile WHERE id = 1').get();
+router.get('/', (req, res) => {
+  const profile = db.prepare('SELECT * FROM user_profile WHERE login_id = ?').get(req.loginId);
   res.json({ profile: profile ?? null });
 });
 
@@ -43,7 +45,7 @@ router.post('/preview', (req, res) => {
   res.json({ targets });
 });
 
-// Create / replace the single user profile.
+// Create / replace profile for this login ID.
 router.post('/', (req, res) => {
   const {
     name,
@@ -79,17 +81,17 @@ router.post('/', (req, res) => {
 
   const stmt = db.prepare(`
     INSERT INTO user_profile (
-      id, name, age, height_cm, current_weight_kg, goal_weight_kg,
+      login_id, name, age, height_cm, current_weight_kg, goal_weight_kg,
       activity_level, goal, diet_style, deficit_kcal,
       daily_calorie_target, daily_protein_g, daily_carb_g, daily_fat_g, daily_water_ml,
       updated_at
     ) VALUES (
-      1, @name, @age, @height_cm, @current_weight_kg, @goal_weight_kg,
+      @login_id, @name, @age, @height_cm, @current_weight_kg, @goal_weight_kg,
       @activity_level, 'cut', 'eggetarian', @deficit_kcal,
       @daily_calorie_target, @daily_protein_g, @daily_carb_g, @daily_fat_g, @daily_water_ml,
       CURRENT_TIMESTAMP
     )
-    ON CONFLICT(id) DO UPDATE SET
+    ON CONFLICT(login_id) DO UPDATE SET
       name = excluded.name,
       age = excluded.age,
       height_cm = excluded.height_cm,
@@ -106,6 +108,7 @@ router.post('/', (req, res) => {
   `);
 
   stmt.run({
+    login_id: req.loginId,
     name: name.trim(),
     age: Math.round(num(age)),
     height_cm: Math.round(num(heightCm)),
@@ -120,16 +123,22 @@ router.post('/', (req, res) => {
     daily_water_ml: targets.daily_water_ml,
   });
 
-  // Seed an initial weight log entry so the trend chart has a starting point.
-  db.prepare('INSERT INTO weight_log (weight_kg) VALUES (?)').run(num(currentWeightKg));
+  db.prepare('INSERT INTO weight_log (login_id, weight_kg) VALUES (?, ?)').run(
+    req.loginId,
+    num(currentWeightKg)
+  );
 
-  const profile = db.prepare('SELECT * FROM user_profile WHERE id = 1').get();
-  res.json({ profile, targets, tdee: calcTDEE({
-    weightKg: num(currentWeightKg),
-    heightCm: num(heightCm),
-    age: num(age),
-    activityLevel,
-  }) });
+  const profile = db.prepare('SELECT * FROM user_profile WHERE login_id = ?').get(req.loginId);
+  res.json({
+    profile,
+    targets,
+    tdee: calcTDEE({
+      weightKg: num(currentWeightKg),
+      heightCm: num(heightCm),
+      age: num(age),
+      activityLevel,
+    }),
+  });
 });
 
 export default router;
