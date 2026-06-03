@@ -5,7 +5,6 @@
 
 import { Router } from 'express';
 import db from '../db/database.js';
-import { hasApiKey } from '../lib/ai.js';
 import { parseMealDescription } from '../lib/mealParse.js';
 import { requireLoginId } from '../lib/user.js';
 import { triggerFleetDiscussion } from '../lib/fleetChat.js';
