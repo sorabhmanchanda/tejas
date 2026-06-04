@@ -173,12 +173,12 @@ CREATE TABLE IF NOT EXISTS briefings (
   created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- FLEET GROUP CHAT (agents talk to each other; user reads the thread)
+-- FLEET GROUP CHAT (user + agents; logs trigger agent threads)
 CREATE TABLE IF NOT EXISTS fleet_messages (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   login_id    TEXT NOT NULL,
   agent_id    TEXT REFERENCES agents(id),
-  role        TEXT NOT NULL,                  -- system|agent
+  role        TEXT NOT NULL,                  -- system|agent|user
   content     TEXT NOT NULL,
   event_type  TEXT,                             -- workout_logged|meal_logged|weight_logged
   source_id   INTEGER,

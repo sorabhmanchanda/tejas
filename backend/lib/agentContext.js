@@ -1,6 +1,7 @@
 // Shared user data — every agent reads the same Tejas database (meals, workouts, etc.).
 
 import db from '../db/database.js';
+import { isLocalToday } from './sqlDates.js';
 
 const DENIAL_RE =
   /do not have access|don't have access|cannot access|can't access|other agent|external system|operate solely|provide.*directly to me/i;
@@ -13,7 +14,7 @@ function todayMeals(loginId) {
   return db
     .prepare(
       `SELECT meal_type, food_name, calories, protein_g, carbs_g, fat_g, source, logged_at
-       FROM meals WHERE login_id = ? AND date(logged_at) = date('now','localtime')
+       FROM meals WHERE login_id = ? AND ${isLocalToday('logged_at')}
        ORDER BY logged_at`
     )
     .all(loginId);
@@ -23,7 +24,7 @@ function todayWorkouts(loginId) {
   return db
     .prepare(
       `SELECT workout_type, workout_name, duration_min, calories_burned, intensity, rpe, completed_at
-       FROM workouts WHERE login_id = ? AND date(completed_at) = date('now','localtime')
+       FROM workouts WHERE login_id = ? AND ${isLocalToday('completed_at')}
        ORDER BY completed_at`
     )
     .all(loginId);
@@ -61,8 +62,8 @@ function recentFleetLines(loginId, limit = 6) {
   return rows.reverse();
 }
 
-/** Live shared log text for all agents. */
-export function buildFleetContext(loginId) {
+/** Structured snapshot for fallbacks and prompts. */
+export function getFleetSnapshot(loginId) {
   const profile = db.prepare('SELECT * FROM user_profile WHERE login_id = ?').get(loginId);
   const meals = todayMeals(loginId);
   const workouts = todayWorkouts(loginId);
@@ -70,7 +71,7 @@ export function buildFleetContext(loginId) {
   const water = db
     .prepare(
       `SELECT COALESCE(SUM(amount_ml),0) AS ml FROM water_log
-       WHERE login_id = ? AND date(logged_at) = date('now','localtime')`
+       WHERE login_id = ? AND ${isLocalToday('logged_at')}`
     )
     .get(loginId);
   const sleep = db
@@ -83,13 +84,41 @@ export function buildFleetContext(loginId) {
     .get(loginId);
 
   let burnTotal = 0;
-  workouts.forEach((w) => {
-    burnTotal += estimateBurn(w);
+  const workoutsWithBurn = workouts.map((w) => {
+    const burn = estimateBurn(w);
+    burnTotal += burn;
+    return { ...w, burn };
   });
 
   const targetKcal = profile?.daily_calorie_target ?? 0;
+  const targetProtein = profile?.daily_protein_g ?? 0;
   const netKcal = Math.round(totals.calories - burnTotal);
-  const remaining = targetKcal ? targetKcal - netKcal : null;
+  const remainingKcal = targetKcal ? targetKcal - netKcal : null;
+  const proteinRemaining = targetProtein ? Math.round(targetProtein - totals.protein_g) : null;
+
+  return {
+    profile,
+    meals,
+    workouts: workoutsWithBurn,
+    totals,
+    waterMl: water?.ml ?? 0,
+    sleep,
+    lastWeight,
+    burnTotal,
+    targetKcal,
+    targetProtein,
+    netKcal,
+    remainingKcal,
+    proteinRemaining,
+  };
+}
+
+/** Live shared log text for all agents. */
+export function buildFleetContext(loginId) {
+  const snap = getFleetSnapshot(loginId);
+  const { profile, meals, workouts, totals, burnTotal, targetKcal, netKcal, remainingKcal, waterMl, sleep, lastWeight } =
+    snap;
+  const remaining = remainingKcal;
 
   const lines = [
     '=== TEJAS SHARED DATABASE (live — same for Anna, Agni, Bala, Nidra, Sage) ===',
@@ -125,9 +154,8 @@ export function buildFleetContext(loginId) {
     lines.push('(none)');
   } else {
     workouts.forEach((w) => {
-      const burn = estimateBurn(w);
       lines.push(
-        `• ${w.workout_name || w.workout_type}: ${w.duration_min ?? '?'} min, ${w.intensity || 'moderate'} — ~${burn} kcal burned${w.calories_burned ? ' (logged)' : ' (estimated)'}`
+        `• ${w.workout_name || w.workout_type}: ${w.duration_min ?? '?'} min, ${w.intensity || 'moderate'} — ~${w.burn} kcal burned${w.calories_burned ? ' (logged)' : ' (estimated)'}`
       );
     });
     lines.push(`WORKOUT BURN TOTAL: ~${burnTotal} kcal`);
@@ -139,7 +167,7 @@ export function buildFleetContext(loginId) {
     lines.push(`Vs ${targetKcal} kcal target: ${remaining >= 0 ? `${remaining} kcal still available` : `${Math.abs(remaining)} kcal over target`}`);
   }
 
-  lines.push(`Water: ${water?.ml ?? 0} ml`);
+  lines.push(`Water: ${waterMl} ml`);
   if (sleep) lines.push(`Last sleep: ${sleep.duration_hours ?? '?'}h (quality ${sleep.quality ?? '—'}/10)`);
   if (lastWeight) lines.push(`Latest weight: ${lastWeight.weight_kg} kg`);
 
@@ -148,6 +176,7 @@ export function buildFleetContext(loginId) {
     lines.push('\n--- RECENT FLEET CHAT ---');
     fleet.forEach((m) => {
       if (m.role === 'system') lines.push(`[event] ${m.content}`);
+      else if (m.role === 'user') lines.push(`[you] ${m.content}`);
       else lines.push(`[${m.agent_name}] ${m.content}`);
     });
   }

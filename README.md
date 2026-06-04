@@ -30,7 +30,7 @@ training, and running. Five agents, one daily rhythm, photo-first logging.
 - **Frontend:** React (Vite) + Tailwind CSS + Recharts
 - **Backend:** Node.js + Express
 - **Database:** SQLite (better-sqlite3)
-- **AI:** Google Gemini (`gemini-2.5-flash` — vision, chat, briefings)
+- **AI:** Google Gemini (`gemini-3.1-flash-lite` — vision, chat, briefings)
 - **PWA:** installable on your phone (manifest + service worker)
 
 ## Quick start

@@ -6,6 +6,7 @@ import { Router } from 'express';
 import db from '../db/database.js';
 import { callAI, hasApiKey } from '../lib/ai.js';
 import { requireLoginId } from '../lib/user.js';
+import { isLocalToday, isLocalYesterday } from '../lib/sqlDates.js';
 
 const router = Router();
 router.use(requireLoginId);
@@ -17,7 +18,7 @@ function getProfile(loginId) {
 function getYesterday(loginId) {
   const meals = db
     .prepare(
-      `SELECT * FROM meals WHERE login_id = ? AND date(logged_at) = date('now','-1 day','localtime')`
+      `SELECT * FROM meals WHERE login_id = ? AND ${isLocalYesterday('logged_at')}`
     )
     .all(loginId);
   const totals = meals.reduce(
@@ -30,12 +31,12 @@ function getYesterday(loginId) {
   const water = db
     .prepare(
       `SELECT COALESCE(SUM(amount_ml),0) AS ml FROM water_log
-       WHERE login_id = ? AND date(logged_at) = date('now','-1 day','localtime')`
+       WHERE login_id = ? AND ${isLocalYesterday('logged_at')}`
     )
     .get(loginId).ml;
   const workout = db
     .prepare(
-      `SELECT * FROM workouts WHERE login_id = ? AND date(completed_at) = date('now','-1 day','localtime') LIMIT 1`
+      `SELECT * FROM workouts WHERE login_id = ? AND ${isLocalYesterday('completed_at')} LIMIT 1`
     )
     .get(loginId);
   const sleep = db
@@ -129,7 +130,7 @@ router.get('/latest', (req, res) => {
   const briefing = db
     .prepare(
       `SELECT * FROM briefings WHERE login_id = ? AND briefing_type='morning'
-       AND date(created_at)=date('now','localtime') ORDER BY created_at DESC LIMIT 1`
+       AND ${isLocalToday('created_at')} ORDER BY created_at DESC LIMIT 1`
     )
     .get(req.loginId);
   res.json({ briefing: briefing ?? null });

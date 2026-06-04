@@ -7,8 +7,16 @@
 
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
-// Gemini model. 2.5 Flash is fast + multimodal (handles food photos).
-export const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+// Gemini model — 3.1 Flash-Lite: fast, cheap, multimodal (vision + chat).
+export const MODEL = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
+
+/** Thinking settings differ between Gemini 2.5 (budget) and 3.x (level). */
+function thinkingConfigForModel(model) {
+  if (String(model).includes('gemini-3')) {
+    return { thinkingLevel: 'minimal' };
+  }
+  return { thinkingBudget: 0 };
+}
 
 export function getApiKey() {
   // Accept either name; prefer the Gemini-specific one.
@@ -82,10 +90,8 @@ export async function callAI({ system, messages, maxTokens = 1000, model = MODEL
   if (!key) throw new Error('GEMINI_API_KEY is not set');
 
   const generationConfig = {
-    // 2.5 models spend "thinking" tokens before answering, which can eat the
-    // whole budget and return empty text. Disable it for our short, structured
-    // calls — faster, cheaper, and reliable.
-    thinkingConfig: { thinkingBudget: 0 },
+    // Keep reasoning off/minimal so short calls stay fast and don't burn tokens.
+    thinkingConfig: thinkingConfigForModel(model),
     maxOutputTokens: maxTokens,
     temperature: 0.7,
   };
@@ -98,7 +104,7 @@ export async function callAI({ system, messages, maxTokens = 1000, model = MODEL
 
   // Retry transient 429/503 (Gemini overload) with small backoff.
   let lastErr;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
     let response;
     try {
       response = await fetch(url, {
@@ -109,7 +115,7 @@ export async function callAI({ system, messages, maxTokens = 1000, model = MODEL
       });
     } catch (e) {
       lastErr = e;
-      await sleep(400 * (attempt + 1));
+      await sleep(800 * (attempt + 1));
       continue;
     }
 
@@ -123,13 +129,13 @@ export async function callAI({ system, messages, maxTokens = 1000, model = MODEL
       if (text) return text;
       const reason = data?.candidates?.[0]?.finishReason || 'empty';
       lastErr = new Error(`Gemini returned no text (finishReason: ${reason})`);
-      await sleep(400 * (attempt + 1));
+      await sleep(800 * (attempt + 1));
       continue;
     }
 
     if (response.status === 429 || response.status >= 500) {
       lastErr = new Error(`Gemini API ${response.status}`);
-      await sleep(500 * (attempt + 1));
+      await sleep(1200 * (attempt + 1));
       continue;
     }
 

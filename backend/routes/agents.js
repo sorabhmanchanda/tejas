@@ -5,6 +5,7 @@
 import { Router } from 'express';
 import db from '../db/database.js';
 import { callAI, hasApiKey } from '../lib/ai.js';
+import { buildAgentFallbackReply } from '../lib/agentChatFallback.js';
 import { buildAgentChatMessages, buildFleetContext, isStaleDenialMessage } from '../lib/agentContext.js';
 import { requireLoginId } from '../lib/user.js';
 
@@ -163,7 +164,19 @@ router.post('/:id/chat', async (req, res) => {
     res.json({ reply });
   } catch (e) {
     console.error('[chat]', e.message);
-    res.status(502).json({ error: 'Agent could not respond right now' });
+    try {
+      const reply = await buildAgentFallbackReply(agentId, req.loginId, userMessage.trim());
+      db.prepare('INSERT INTO chat_messages (login_id, agent_id, role, content) VALUES (?, ?, ?, ?)').run(
+        req.loginId,
+        agentId,
+        'assistant',
+        reply
+      );
+      return res.json({ reply, degraded: true });
+    } catch (fallbackErr) {
+      console.error('[chat/fallback]', fallbackErr.message);
+      res.status(502).json({ error: 'Agent could not respond right now' });
+    }
   }
 });
 

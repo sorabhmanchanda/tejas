@@ -1,7 +1,8 @@
-// Fleet group chat — agents reply in sequence after user logs activity.
+// Fleet group chat — agents discuss after logs; user can post and @mention agents.
 
 import db from '../db/database.js';
 import { callAI, hasApiKey } from './ai.js';
+import { buildFleetContext } from './agentContext.js';
 
 const AGENT_NAMES = {
   anna: 'Anna',
@@ -16,6 +17,11 @@ const AGENTS_BY_EVENT = {
   meal_logged: ['anna', 'agni', 'sage'],
   weight_logged: ['agni', 'sage'],
 };
+
+/** Default responders when the user posts without @mentions (keeps API load reasonable). */
+const AGENTS_FOR_USER_DEFAULT = ['anna', 'agni', 'sage'];
+
+const MENTION_RE = /@(anna|agni|bala|nidra|sage)\b/gi;
 
 const FLEET_PERSONAS = {
   bala: `You are Bala (बल), workout coach, posting in the Tejas fleet group chat.
@@ -63,14 +69,54 @@ function formatEventSummary(event, profile) {
   }
 }
 
-function buildThreadText(thread) {
+function buildThreadText(thread, userName = 'You') {
   if (!thread.length) return '(no messages yet)';
   return thread
     .map((m) => {
       if (m.role === 'system') return `[system] ${m.content}`;
-      return `[${AGENT_NAMES[m.agent_id] || m.agent_id}] ${m.content}`;
+      if (m.role === 'user') return `[${userName}] ${m.content}`;
+      return `[${AGENT_NAMES[m.agent_id] || m.agent_name || m.agent_id}] ${m.content}`;
     })
     .join('\n');
+}
+
+function parseMentionedAgents(text) {
+  const found = [];
+  const seen = new Set();
+  for (const m of String(text).matchAll(MENTION_RE)) {
+    const id = m[1].toLowerCase();
+    if (!seen.has(id)) {
+      seen.add(id);
+      found.push(id);
+    }
+  }
+  return found;
+}
+
+function agentsForUserMessage(text) {
+  const mentioned = parseMentionedAgents(text);
+  return mentioned.length ? mentioned : AGENTS_FOR_USER_DEFAULT;
+}
+
+function loadThreadRows(loginId, limit = 40) {
+  return listFleetMessages(loginId, { limit }).map((r) => ({
+    role: r.role,
+    agent_id: r.agent_id,
+    agent_name: r.agent_name,
+    content: r.content,
+  }));
+}
+
+function mockUserReply(agentId, profile) {
+  const name = profile?.name ?? 'there';
+  const mocks = {
+    anna: `${name}, for eggetarian options — dal, eggs, or paneer; say which meal you're planning.`,
+    agni: `I'll use today's log for the numbers — target ~${profile?.daily_protein_g ?? 140}g protein and ${profile?.daily_calorie_target ?? 2000} kcal.`,
+    bala: `If this is about training, log the session when done and we'll adjust volume from there.`,
+    nidra: `Hydration and sleep matter here — aim for 7h tonight and an extra glass of water.`,
+    sage: `Noted. One clear focus: hit protein at your next meal, then check net kcal for the day.`,
+  };
+  return mocks[agentId] || 'Got it — we are on it.';
 }
 
 function mockReplies(event) {
@@ -164,11 +210,15 @@ async function runFleetDiscussion(loginId, event) {
       return;
     }
 
+    const mockByAgent = Object.fromEntries(mockReplies(event).map((m) => [m.agent_id, m.content]));
+
     for (const agentId of agents) {
-      const persona = FLEET_PERSONAS[agentId];
-      const reply = await callAI({
-        maxTokens: 350,
-        system: `${persona}
+      let text;
+      try {
+        const persona = FLEET_PERSONAS[agentId];
+        const reply = await callAI({
+          maxTokens: 350,
+          system: `${persona}
 
 User profile: ${profile?.name ?? 'User'}, cut, eggetarian, ~${profile?.daily_calorie_target ?? 2000} kcal/day, ~${profile?.daily_protein_g ?? 140}g protein/day.
 Event: ${summary}
@@ -177,15 +227,21 @@ Rules:
 - ONE message only, no bullet lists unless tiny.
 - Reference other agents by name if responding to them.
 - Do not repeat the system line verbatim.`,
-        messages: [
-          {
-            role: 'user',
-            content: `Fleet chat thread so far:\n${buildThreadText(thread)}\n\nPost your message as ${AGENT_NAMES[agentId]}:`,
-          },
-        ],
-      });
+          messages: [
+            {
+              role: 'user',
+              content: `Fleet chat thread so far:\n${buildThreadText(thread)}\n\nPost your message as ${AGENT_NAMES[agentId]}:`,
+            },
+          ],
+        });
+        text = (reply || '').trim() || mockByAgent[agentId] || '…';
+      } catch (agentErr) {
+        console.error(`[fleet/${agentId}]`, agentErr.message);
+        text =
+          mockByAgent[agentId] ||
+          `${AGENT_NAMES[agentId]}: Log received — I'll sync fully when Gemini is available.`;
+      }
 
-      const text = (reply || '').trim() || '…';
       insertFleetMessage(loginId, {
         agentId,
         role: 'agent',
@@ -197,16 +253,114 @@ Rules:
     }
   } catch (e) {
     console.error('[fleet]', e.message);
-    insertFleetMessage(loginId, {
-      agentId: 'sage',
-      role: 'agent',
-      content: 'Fleet sync hiccup — your log is saved. Try again in a moment.',
-      eventType: event.type,
-      sourceId: null,
-    });
   } finally {
     activeDiscussions.delete(loginId);
   }
+}
+
+async function runFleetUserReply(loginId, userText) {
+  if (activeDiscussions.has(loginId)) return;
+  activeDiscussions.add(loginId);
+
+  try {
+    const profile = db.prepare('SELECT * FROM user_profile WHERE login_id = ?').get(loginId);
+    const userName = profile?.name ?? 'You';
+    const agents = agentsForUserMessage(userText);
+    const thread = loadThreadRows(loginId);
+    const fleetContext = buildFleetContext(loginId);
+    const mockByAgent = Object.fromEntries(agents.map((id) => [id, mockUserReply(id, profile)]));
+
+    if (!hasApiKey()) {
+      for (const agentId of agents) {
+        insertFleetMessage(loginId, {
+          agentId,
+          role: 'agent',
+          content: mockByAgent[agentId],
+          eventType: 'user_message',
+          sourceId: null,
+        });
+      }
+      return;
+    }
+
+    const liveThread = [...thread];
+
+    for (const agentId of agents) {
+      let text;
+      try {
+        const persona = FLEET_PERSONAS[agentId];
+        const reply = await callAI({
+          maxTokens: 350,
+          system: `${persona}
+
+The user posted directly in the fleet group chat (not only a log event). Reply to their message; reference other agents by name when relevant.
+
+User profile: ${userName}, cut, eggetarian, ~${profile?.daily_calorie_target ?? 2000} kcal/day, ~${profile?.daily_protein_g ?? 140}g protein/day.
+
+Shared database (use these facts; do not claim you lack access):
+${fleetContext}
+
+Rules:
+- ONE message only, 2–4 sentences max.
+- Answer the user's question or comment directly.`,
+          messages: [
+            {
+              role: 'user',
+              content: `Fleet chat thread:\n${buildThreadText(liveThread, userName)}\n\nPost your reply as ${AGENT_NAMES[agentId]}:`,
+            },
+          ],
+        });
+        text = (reply || '').trim() || mockByAgent[agentId];
+      } catch (agentErr) {
+        console.error(`[fleet/user/${agentId}]`, agentErr.message);
+        text = mockByAgent[agentId];
+      }
+
+      insertFleetMessage(loginId, {
+        agentId,
+        role: 'agent',
+        content: text,
+        eventType: 'user_message',
+        sourceId: null,
+      });
+      liveThread.push({ role: 'agent', agent_id: agentId, content: text });
+    }
+  } catch (e) {
+    console.error('[fleet/user]', e.message);
+  } finally {
+    activeDiscussions.delete(loginId);
+  }
+}
+
+/**
+ * User posts in fleet chat. Returns immediately; agents reply asynchronously.
+ */
+export function postFleetUserMessage(loginId, text) {
+  const trimmed = String(text ?? '').trim();
+  if (!trimmed) {
+    const err = new Error('message is required');
+    err.status = 400;
+    throw err;
+  }
+  if (activeDiscussions.has(loginId)) {
+    const err = new Error('Fleet is still discussing. Try again in a moment.');
+    err.status = 409;
+    throw err;
+  }
+
+  const { lastInsertRowid } = insertFleetMessage(loginId, {
+    agentId: null,
+    role: 'user',
+    content: trimmed.slice(0, 4000),
+    eventType: 'user_message',
+    sourceId: null,
+  });
+
+  setImmediate(() => {
+    runFleetUserReply(loginId, trimmed).catch((e) => console.error('[fleet/user]', e.message));
+  });
+
+  return { id: Number(lastInsertRowid), accepted: true };
 }
 
 /** Fire-and-forget after a log endpoint succeeds. */

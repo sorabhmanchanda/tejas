@@ -4,6 +4,16 @@ import { api } from '../lib/api.js';
 const SANSKRIT = { anna: 'अन्न', agni: 'अग्नि', bala: 'बल', nidra: 'निद्रा', sage: 'सेज' };
 
 function Bubble({ msg }) {
+  if (msg.role === 'user') {
+    return (
+      <div className="flex justify-end py-0.5">
+        <p className="max-w-[88%] rounded-xl rounded-tr-sm border border-saffron/30 bg-saffron/15 px-3 py-2 text-sm leading-relaxed text-zinc-100">
+          {msg.content}
+        </p>
+      </div>
+    );
+  }
+
   if (msg.role === 'system') {
     return (
       <div className="flex justify-center py-1">
@@ -45,6 +55,9 @@ function Bubble({ msg }) {
 export default function FleetThread({ refreshKey = 0 }) {
   const [messages, setMessages] = useState([]);
   const [active, setActive] = useState(false);
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState('');
   const lastIdRef = useRef(0);
   const scrollRef = useRef(null);
 
@@ -72,13 +85,35 @@ export default function FleetThread({ refreshKey = 0 }) {
   }, [refreshKey, load]);
 
   useEffect(() => {
-    const id = setInterval(() => load(false), active ? 2000 : 8000);
+    const id = setInterval(() => load(false), active || sending ? 2000 : 8000);
     return () => clearInterval(id);
-  }, [load, active]);
+  }, [load, active, sending]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, active]);
+  }, [messages, active, sending]);
+
+  async function send() {
+    const text = input.trim();
+    if (!text || sending || active) return;
+    setSendError('');
+    setInput('');
+    setSending(true);
+    setMessages((prev) => [...prev, { id: `tmp-${Date.now()}`, role: 'user', content: text }]);
+    setActive(true);
+    try {
+      await api.postFleetMessage(text);
+      await load(true);
+    } catch (e) {
+      setSendError(e.message);
+      setMessages((prev) => prev.filter((m) => !String(m.id).startsWith('tmp-')));
+      setInput(text);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const busy = active || sending;
 
   return (
     <section className="card flex flex-col overflow-hidden">
@@ -87,9 +122,11 @@ export default function FleetThread({ refreshKey = 0 }) {
           <h2 className="font-head text-sm font-bold uppercase tracking-[0.18em] text-zinc-400">
             Fleet chat
           </h2>
-          <p className="text-[11px] text-zinc-600">Agents coordinate when you log — read-only</p>
+          <p className="text-[11px] text-zinc-600">
+            You + agents · default Anna, Agni, Sage · use @bala @nidra to tag others
+          </p>
         </div>
-        {active && (
+        {busy && (
           <span className="flex items-center gap-1.5 text-xs text-saffron">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-saffron" />
             talking…
@@ -98,14 +135,40 @@ export default function FleetThread({ refreshKey = 0 }) {
       </div>
 
       <div ref={scrollRef} className="flex max-h-[320px] min-h-[120px] flex-col gap-3 overflow-y-auto p-4">
-        {messages.length === 0 && !active && (
-          <p className="py-6 text-center text-sm text-zinc-600">
-            Log a workout or meal — Bala, Anna, and the fleet will discuss it here.
+        {messages.length === 0 && !busy && (
+          <p className="py-4 text-center text-sm text-zinc-600">
+            Log a meal or workout to start a thread, or ask the fleet anything below.
           </p>
         )}
         {messages.map((m) => (
           <Bubble key={m.id} msg={m} />
         ))}
+        {sending && (
+          <p className="text-center text-[11px] text-zinc-500">Agents are replying…</p>
+        )}
+      </div>
+
+      <div className="border-t border-line p-3">
+        {sendError && <p className="mb-2 text-xs text-red-400">{sendError}</p>}
+        <div className="flex items-center gap-2">
+          <input
+            className="input flex-1"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && send()}
+            placeholder={busy ? 'Wait for agents…' : 'Message the fleet… (@anna @bala)'}
+            disabled={busy}
+            maxLength={4000}
+          />
+          <button
+            type="button"
+            className="btn btn-primary px-4"
+            onClick={send}
+            disabled={busy || !input.trim()}
+          >
+            Send
+          </button>
+        </div>
       </div>
     </section>
   );

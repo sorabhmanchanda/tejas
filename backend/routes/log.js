@@ -6,6 +6,7 @@
 import { Router } from 'express';
 import db from '../db/database.js';
 import { parseMealDescription } from '../lib/mealParse.js';
+import { isLocalToday } from '../lib/sqlDates.js';
 import { requireLoginId } from '../lib/user.js';
 import { triggerFleetDiscussion } from '../lib/fleetChat.js';
 
@@ -32,18 +33,18 @@ router.get('/today', (req, res) => {
   const { loginId } = req;
   const meals = db
     .prepare(
-      `SELECT * FROM meals WHERE login_id = ? AND date(logged_at) = date('now','localtime') ORDER BY logged_at`
+      `SELECT * FROM meals WHERE login_id = ? AND ${isLocalToday('logged_at')} ORDER BY logged_at`
     )
     .all(loginId);
   const water = db
     .prepare(
       `SELECT COALESCE(SUM(amount_ml),0) AS ml FROM water_log
-       WHERE login_id = ? AND date(logged_at) = date('now','localtime')`
+       WHERE login_id = ? AND ${isLocalToday('logged_at')}`
     )
     .get(loginId);
   const workout = db
     .prepare(
-      `SELECT * FROM workouts WHERE login_id = ? AND date(completed_at) = date('now','localtime')
+      `SELECT * FROM workouts WHERE login_id = ? AND ${isLocalToday('completed_at')}
        ORDER BY completed_at DESC LIMIT 1`
     )
     .get(loginId);
@@ -205,7 +206,7 @@ router.post('/water', (req, res) => {
   const today = db
     .prepare(
       `SELECT COALESCE(SUM(amount_ml),0) AS ml FROM water_log
-       WHERE login_id = ? AND date(logged_at) = date('now','localtime')`
+       WHERE login_id = ? AND ${isLocalToday('logged_at')}`
     )
     .get(req.loginId);
   res.json({ added_ml: amount, total_ml: today.ml });

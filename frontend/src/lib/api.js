@@ -84,6 +84,8 @@ export const api = {
   // Fleet group chat
   getFleetMessages: (since = 0) =>
     request(`/fleet/messages?since=${since}&limit=80`),
+  postFleetMessage: (message) =>
+    request('/fleet/messages', { method: 'POST', body: { message } }),
   fleetStatus: () => request('/fleet/status'),
 
   // Briefing
